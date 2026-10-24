@@ -1,0 +1,14 @@
+node_modules
+.next
+.next-dev
+.next-e2e
+next-env.d.ts
+*.tsbuildinfo
+data/app.db*
+.cache
+.tmp
+.env.local
+api_key
+*.log
+run.out
+__pycache__

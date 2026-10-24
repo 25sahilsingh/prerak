@@ -1,0 +1,39 @@
+{
+  "name": "prerak",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "tsx scripts/ingest.ts --if-missing",
+    "dev": "next dev",
+    "build": "next build",
+    "prestart": "tsx scripts/ingest.ts --if-missing",
+    "start": "next start",
+    "ingest": "tsx scripts/ingest.ts",
+    "typecheck": "tsc --noEmit",
+    "check:guard": "tsx scripts/guard-check.ts",
+    "e2e": "tsx scripts/e2e.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
+    "better-sqlite3": "^13.0.3",
+    "next": "^15.5.28",
+    "openai": "^7.43.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "unpdf": "^1.9.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "postcss": "^8.5.31",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

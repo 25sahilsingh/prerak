@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #fff1f5;
+  --color-brand-100: #ffe1ea;
+  --color-brand-200: #ffc2d4;
+  --color-brand-500: #d6336c;
+  --color-brand-600: #b8205a;
+  --color-brand-700: #931448;
+  --color-ink: #1f1a1c;
+  --color-cream: #fffaf5;
+  --font-sans: "Noto Sans", "Noto Sans Devanagari", "Mukta", system-ui, sans-serif;
+}
+
+html {
+  font-size: 17px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+.prose-chat p {
+  margin: 0.4rem 0;
+}
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.4rem 0;
+  padding-left: 1.3rem;
+}
+.prose-chat ul {
+  list-style: disc;
+}
+.prose-chat ol {
+  list-style: decimal;
+}
+.prose-chat li {
+  margin: 0.2rem 0;
+}
+.prose-chat strong {
+  font-weight: 700;
+}
+.prose-chat a {
+  color: var(--color-brand-600);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  font-weight: 700;
+  margin: 0.6rem 0 0.2rem;
+}
+.prose-chat table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid #e5d5da;
+  padding: 0.25rem 0.5rem;
+}
