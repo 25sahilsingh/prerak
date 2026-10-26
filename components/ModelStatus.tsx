@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { store } from "@/lib/client";
 import { AlertIcon } from "./icons";
 import { useLang } from "./i18n";
 
@@ -12,6 +13,7 @@ export type Health = {
   model: string;
   models: string[];
   modelFound?: boolean;
+  usingServerDefault?: boolean;
   error?: string;
 };
 
@@ -19,7 +21,12 @@ export function useModelHealth(pollMs = 0) {
   const [health, setHealth] = useState<Health | null>(null);
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/health", { cache: "no-store" });
+      const res = await fetch("/api/health", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ llm: store.llm }),
+        cache: "no-store",
+      });
       setHealth(await res.json());
     } catch {
       setHealth(null);
@@ -37,15 +44,18 @@ export function useModelHealth(pollMs = 0) {
 export function ModelBanner({ health }: { health: Health | null }) {
   const { t } = useLang();
   if (!health || (health.ok && health.modelFound !== false)) return null;
-  const message = !health.ok
+  const where = health.baseUrl || t("इस साइट का डिफ़ॉल्ट मॉडल", "this site's default model");
+  const message = !health.configured
+    ? t("अपना AI मॉडल सेटिंग्स में जोड़ें, फिर सवाल पूछें।", "Connect your own AI model in Settings to start asking questions.")
+    : !health.ok
     ? t(
-        `आपका AI मॉडल ${health.baseUrl} पर नहीं मिल रहा। अपना लोकल मॉडल सर्वर चालू करें या सेटिंग्स में पता बदलें।`,
-        `Can't reach your model at ${health.baseUrl}. Start your local model server or update it in Settings.`,
+        `${where} से जुड़ नहीं पाए। देखें कि मॉडल सर्वर चालू है और इंटरनेट से पहुँचा जा सकता है, या सेटिंग्स में पता बदलें।`,
+        `Can't reach ${where}. Check that your model server is running and reachable from the internet, or update it in Settings.`,
       )
     : health.models.length === 0
       ? t(
-          `${health.baseUrl} पर सर्वर चल रहा है, पर कोई मॉडल डाउनलोड नहीं है। एक मॉडल डाउनलोड करें या सेटिंग्स देखें।`,
-          `Your model server at ${health.baseUrl} is running but has no model downloaded. Download a model or check Settings.`,
+          `${where} पर सर्वर चल रहा है, पर कोई मॉडल डाउनलोड नहीं है। एक मॉडल डाउनलोड करें या सेटिंग्स देखें।`,
+          `The model server at ${where} is running but has no model downloaded. Download a model or check Settings.`,
         )
       : t(
           `मॉडल "${health.model}" सर्वर पर नहीं मिला। सेटिंग्स में सूची से मॉडल चुनें।`,

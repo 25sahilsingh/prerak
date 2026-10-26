@@ -1,0 +1,29 @@
+# Render blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# The app keeps its SQLite database in data/, so it runs as one instance with a persistent disk mounted there.
+services:
+  - type: web
+    name: prerak
+    runtime: node
+    # The embedding model and the server need about 700 MB, more than the 512 MB plans; 1c-2g is 1 CPU and 2 GB.
+    plan: 1c-2g
+    region: singapore
+    buildCommand: npm ci && npm run build
+    # prestart builds data/app.db from the PDF on the first start (a few minutes), then skips it.
+    startCommand: npm start
+    healthCheckPath: /api/settings
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Optional default model for visitors who have not connected their own.
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+    disk:
+      name: prerak-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1

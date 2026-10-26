@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { AlertIcon, CheckIcon } from "@/components/icons";
 import { useLang } from "@/components/i18n";
+import { store } from "@/lib/client";
 
-type Preset = { id: string; label: string; baseUrl: string };
+type Preset = { id: string; label: string; baseUrl: string; port?: number };
 type TestState = { kind: "idle" } | { kind: "testing" } | { kind: "ok"; models: string[] } | { kind: "error"; message: string };
 
 const inputCls = "w-full min-h-12 rounded-xl border-2 border-brand-100 bg-white px-3 text-base focus:border-brand-500 focus:outline-none";
@@ -19,35 +20,57 @@ const HELP: Record<string, { hi: string; en: string }> = {
     en: "Download a model in LM Studio, then press 'Start Server' in the Developer tab.",
   },
   llamacpp: {
-    hi: "चलाएँ: llama-server -m your-model.gguf --port 8080",
-    en: "Run: llama-server -m your-model.gguf --port 8080",
+    hi: "चलाएँ: llama-server -m your-model.gguf --port 8080 --api-key <कोई-लंबा-पासवर्ड>",
+    en: "Run: llama-server -m your-model.gguf --port 8080 --api-key <a-long-password>",
   },
-  vllm: { hi: "चलाएँ: vllm serve <model-name> --port 8000", en: "Run: vllm serve <model-name> --port 8000" },
+  vllm: {
+    hi: "चलाएँ: vllm serve <model-name> --port 8000 --api-key <कोई-लंबा-पासवर्ड>",
+    en: "Run: vllm serve <model-name> --port 8000 --api-key <a-long-password>",
+  },
+  openrouter: {
+    hi: "openrouter.ai पर API key बनाएँ और नीचे डालें।",
+    en: "Create an API key on openrouter.ai and paste it below.",
+  },
+  groq: {
+    hi: "console.groq.com पर API key बनाएँ और नीचे डालें।",
+    en: "Create an API key on console.groq.com and paste it below.",
+  },
 };
+
+// Ollama rejects requests whose Host header is not its own, which is what a tunnel sends by default.
+const tunnelCommand = (p: Preset) =>
+  `cloudflared tunnel --url http://localhost:${p.port}` + (p.id === "ollama" ? ` --http-host-header localhost:${p.port}` : "");
 
 export default function SettingsPage() {
   const { t } = useLang();
   const [presets, setPresets] = useState<Preset[]>([]);
+  const [serverDefault, setServerDefault] = useState<{ model: string } | null>(null);
+  const [allowPrivate, setAllowPrivate] = useState(false);
+  const [hasSaved, setHasSaved] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [clearKey, setClearKey] = useState(false);
   const [preset, setPreset] = useState<string>("");
   const [test, setTest] = useState<TestState>({ kind: "idle" });
-  const [save, setSave] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [save, setSave] = useState<"idle" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
+    const saved = store.llm;
+    if (saved) {
+      setHasSaved(true);
+      setBaseUrl(saved.baseUrl);
+      setModel(saved.model);
+      setApiKey(saved.apiKey);
+      void runTest(saved.baseUrl, saved.apiKey);
+    }
     fetch("/api/settings")
       .then((r) => r.json())
       .then((s) => {
         setPresets(s.presets);
-        setBaseUrl(s.baseUrl);
-        setModel(s.model);
-        setHasApiKey(s.hasApiKey);
-        setPreset(s.presets.find((p: Preset) => p.baseUrl === s.baseUrl)?.id ?? "");
-        void runTest(s.baseUrl, "");
+        setServerDefault(s.serverDefault);
+        setAllowPrivate(s.allowPrivate);
+        if (saved) setPreset(s.presets.find((p: Preset) => p.baseUrl === saved.baseUrl)?.id ?? "");
       })
       .catch(() => {});
   }, []);
@@ -58,7 +81,7 @@ export default function SettingsPage() {
       const res = await fetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: url, apiKey: key }),
+        body: JSON.stringify({ llm: { baseUrl: url, apiKey: key } }),
       });
       const body = await res.json();
       if (body.ok) {
@@ -70,34 +93,46 @@ export default function SettingsPage() {
     }
   }
 
-  async function onSave(e: React.FormEvent) {
+  function onSave(e: React.FormEvent) {
     e.preventDefault();
-    setSave("saving");
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl, model, ...(apiKey ? { apiKey } : clearKey ? { apiKey: "" } : {}) }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error);
-      setHasApiKey(body.hasApiKey);
-      setApiKey("");
-      setClearKey(false);
-      setSave("saved");
-    } catch (err) {
-      setSaveError((err as Error).message);
+    const url = baseUrl.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\/\S+/i.test(url)) {
+      setSaveError(t("ऐसा पता डालें जो http:// या https:// से शुरू हो।", "Enter a URL that starts with http:// or https://"));
       setSave("error");
+      return;
     }
+    store.llm = { baseUrl: url, model: model.trim(), apiKey: apiKey.trim() };
+    setBaseUrl(url);
+    setHasSaved(true);
+    setSave("saved");
+  }
+
+  function onForget() {
+    store.llm = null;
+    setHasSaved(false);
+    setBaseUrl("");
+    setModel("");
+    setApiKey("");
+    setPreset("");
+    setTest({ kind: "idle" });
+    setSave("idle");
   }
 
   const choosePreset = (p: Preset) => {
     setPreset(p.id);
-    setBaseUrl(p.baseUrl);
     setModel("");
     setSave("idle");
+    // A localhost address only works when this app runs on the same computer as the model.
+    if (p.port && !allowPrivate) {
+      setBaseUrl("");
+      setTest({ kind: "idle" });
+      return;
+    }
+    setBaseUrl(p.baseUrl);
     void runTest(p.baseUrl, apiKey);
   };
+
+  const chosen = presets.find((p) => p.id === preset);
 
   return (
     <form onSubmit={onSave} className="mx-auto max-w-2xl space-y-5">
@@ -105,11 +140,21 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold">{t("AI मॉडल सेटिंग्स", "AI model settings")}</h1>
         <p className="mt-1 text-ink/75">
           {t(
-            "एक बार सेट करना होता है। किसी जानकार की मदद ले सकती हैं।",
-            "Set this up once. You can ask someone who knows computers to help.",
+            "अपना AI मॉडल जोड़ें। यह जानकारी सिर्फ़ इसी ब्राउज़र में रहती है, हमारे सर्वर पर सेव नहीं होती। किसी जानकार की मदद ले सकती हैं।",
+            "Connect your own AI model. These settings stay in this browser only and are never saved on our server. You can ask someone who knows computers to help.",
           )}
         </p>
       </div>
+
+      {serverDefault && !hasSaved && (
+        <p role="status" className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-emerald-900">
+          <CheckIcon className="shrink-0" />
+          {t(
+            "इस साइट पर एक डिफ़ॉल्ट मॉडल पहले से जुड़ा है। आप उसे इस्तेमाल कर सकती हैं या नीचे अपना मॉडल जोड़ सकती हैं।",
+            "This site already has a default model you can use. You can also connect your own below.",
+          )}
+        </p>
+      )}
 
       <section className="space-y-3 rounded-2xl border border-brand-100 bg-white p-4">
         <h2 className="text-lg font-bold text-brand-700">{t("1. आप कौन सा मॉडल सर्वर इस्तेमाल करती हैं?", "1. Which model server do you use?")}</h2>
@@ -129,6 +174,29 @@ export default function SettingsPage() {
           ))}
         </div>
         {preset && HELP[preset] && <p className="rounded-xl bg-cream p-3 text-sm">{t(HELP[preset].hi, HELP[preset].en)}</p>}
+        {chosen?.port && !allowPrivate && (
+          <div className="space-y-2 rounded-xl bg-cream p-3 text-sm">
+            <p className="font-semibold">
+              {t(
+                "यह साइट इंटरनेट पर चलती है, इसलिए आपके कंप्यूटर का localhost यहाँ से नहीं दिखता। एक टनल चालू करें:",
+                "This site runs on the internet, so it can't see localhost on your computer. Start a tunnel:",
+              )}
+            </p>
+            <code className="block break-all rounded-lg bg-white p-2 text-xs">{tunnelCommand(chosen)}</code>
+            <p>
+              {t(
+                "जो https://….trycloudflare.com पता दिखे, उसके आख़िर में /v1 जोड़कर नीचे डालें।",
+                "Copy the https://….trycloudflare.com address it prints, add /v1 at the end, and paste it below.",
+              )}
+            </p>
+            <p className="text-ink/70">
+              {t(
+                "टनल चालू रहने तक जिसके पास यह पता है वह आपका मॉडल इस्तेमाल कर सकता है। काम के बाद इसे बंद करें।",
+                "While the tunnel runs, anyone with that address can use your model. Close it when you are done.",
+              )}
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="space-y-4 rounded-2xl border border-brand-100 bg-white p-4">
@@ -146,7 +214,7 @@ export default function SettingsPage() {
               setPreset(presets.find((p) => p.baseUrl === e.target.value.trim())?.id ?? "");
               setSave("idle");
             }}
-            placeholder="http://localhost:11434/v1"
+            placeholder={allowPrivate ? "http://localhost:11434/v1" : "https://your-tunnel.trycloudflare.com/v1"}
             inputMode="url"
             autoComplete="off"
             spellCheck={false}
@@ -164,15 +232,9 @@ export default function SettingsPage() {
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={hasApiKey ? t("सेव है - बदलने के लिए नई लिखें", "Saved - type a new one to replace") : t("लोकल सर्वर के लिए खाली छोड़ें", "Leave empty for local servers")}
+            placeholder={t("अगर आपका सर्वर key नहीं माँगता तो खाली छोड़ें", "Leave empty if your server doesn't ask for one")}
             autoComplete="off"
           />
-          {hasApiKey && (
-            <label className="mt-2 flex min-h-11 items-center gap-2 text-sm">
-              <input type="checkbox" checked={clearKey} onChange={(e) => setClearKey(e.target.checked)} className="h-5 w-5 accent-brand-500" />
-              {t("सेव की हुई key हटाएँ", "Remove the saved key")}
-            </label>
-          )}
         </div>
 
         <button
@@ -242,11 +304,18 @@ export default function SettingsPage() {
       <div className="sticky bottom-20 z-10 space-y-2 rounded-2xl bg-cream/95 py-2 md:bottom-2">
         <button
           type="submit"
-          disabled={save === "saving" || !baseUrl}
+          disabled={!baseUrl}
           className="min-h-14 w-full rounded-2xl bg-brand-500 text-lg font-bold text-white shadow hover:bg-brand-600 disabled:opacity-60"
         >
-          {save === "saving" ? t("सेव हो रहा है...", "Saving...") : t("सेव करें", "Save")}
+          {t("इस ब्राउज़र में सेव करें", "Save in this browser")}
         </button>
+        {hasSaved && (
+          <button type="button" onClick={onForget} className="min-h-11 w-full text-center font-semibold text-brand-700 underline">
+            {serverDefault
+              ? t("मेरी सेटिंग्स हटाएँ और साइट का मॉडल इस्तेमाल करें", "Forget my settings and use the site's model")
+              : t("मेरी सेटिंग्स इस ब्राउज़र से हटाएँ", "Forget my settings in this browser")}
+          </button>
+        )}
         {save === "saved" && (
           <p role="status" className="text-center font-semibold text-emerald-700">
             {t("सेव हो गया!", "Saved!")}{" "}

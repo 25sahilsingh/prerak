@@ -5,7 +5,7 @@ import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
   title: "Prerak · प्रेरक",
-  description: "Find government schemes for women and girls in Uttar Pradesh, in Hindi or English.",
+  description: "Find government schemes for women and girls, in Hindi or English.",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#d6336c" };

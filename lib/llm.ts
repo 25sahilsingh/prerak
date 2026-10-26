@@ -1,21 +1,25 @@
 import OpenAI from "openai";
-import { getLlmSettings, normalizeBaseUrl, type LlmSettings } from "./settings";
+import { modelFetch } from "./safe-fetch";
+import { normalizeBaseUrl, type LlmSettings } from "./settings";
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 function client(s: LlmSettings) {
-  return new OpenAI({ baseURL: s.baseUrl, apiKey: s.apiKey || "not-needed", timeout: 300_000, maxRetries: 0 });
+  return new OpenAI({ baseURL: s.baseUrl, apiKey: s.apiKey || "not-needed", timeout: 300_000, maxRetries: 0, fetch: modelFetch(s.trusted) });
 }
 
-export async function listModels(baseUrl: string, apiKey?: string, timeoutMs = 5000): Promise<string[]> {
-  const res = await fetch(`${normalizeBaseUrl(baseUrl)}/models`, {
-    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+export async function listModels(s: LlmSettings, timeoutMs = 5000): Promise<string[]> {
+  const baseUrl = s.baseUrl;
+  const res = await modelFetch(s.trusted)(`${normalizeBaseUrl(baseUrl)}/models`, {
+    headers: s.apiKey ? { Authorization: `Bearer ${s.apiKey}` } : {},
     signal: AbortSignal.timeout(timeoutMs),
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Server answered ${res.status} ${res.statusText}`);
   const body = (await res.json()) as { data?: { id: string }[] | null; models?: { name?: string; model?: string; capabilities?: unknown }[] };
   // llama.cpp's server is the one that returns a "models" list with "capabilities" next to "data".
+  // Every visitor brings an address, so the cache is dropped rather than left to grow.
+  if (serverKind.size > 500) serverKind.clear();
   serverKind.set(normalizeBaseUrl(baseUrl), body.models?.some((m) => m.capabilities) ? "llamacpp" : "other");
   const ids = body.data?.map((m) => m.id) ?? body.models?.map((m) => m.model ?? m.name ?? "") ?? [];
   return ids.filter(Boolean);
@@ -25,7 +29,7 @@ const serverKind = new Map<string, "llamacpp" | "other">();
 
 async function isLlamaCpp(s: LlmSettings): Promise<boolean> {
   // A busy server can answer slowly; guessing "not llama.cpp" would route Hindi through the chat parser that breaks it.
-  if (!serverKind.has(s.baseUrl)) await listModels(s.baseUrl, s.apiKey, 30_000).catch(() => {});
+  if (!serverKind.has(s.baseUrl)) await listModels(s, 30_000).catch(() => {});
   return serverKind.get(s.baseUrl) === "llamacpp";
 }
 
@@ -33,7 +37,7 @@ async function isLlamaCpp(s: LlmSettings): Promise<boolean> {
 // the server's own template and using plain text completion avoids that parser entirely.
 async function llamaCppPrompt(s: LlmSettings, messages: ChatMessage[], signal?: AbortSignal): Promise<string | null> {
   try {
-    const res = await fetch(`${s.baseUrl.replace(/\/v1$/, "")}/apply-template`, {
+    const res = await modelFetch(s.trusted)(`${s.baseUrl.replace(/\/v1$/, "")}/apply-template`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(s.apiKey ? { Authorization: `Bearer ${s.apiKey}` } : {}) },
       body: JSON.stringify({ messages }),
@@ -48,7 +52,7 @@ async function llamaCppPrompt(s: LlmSettings, messages: ChatMessage[], signal?: 
 
 async function resolveModel(s: LlmSettings): Promise<string> {
   if (s.model) return s.model;
-  const models = await listModels(s.baseUrl, s.apiKey);
+  const models = await listModels(s);
   if (!models.length) throw new Error("The model server has no models loaded.");
   return models[0];
 }
@@ -87,8 +91,7 @@ function thinkFilter() {
   };
 }
 
-export async function* streamChat(messages: ChatMessage[], opts: { maxTokens?: number; signal?: AbortSignal } = {}) {
-  const s = getLlmSettings();
+export async function* streamChat(s: LlmSettings, messages: ChatMessage[], opts: { maxTokens?: number; signal?: AbortSignal } = {}) {
   const model = await resolveModel(s);
   const params = { model, stream: true as const, temperature: 0.1, max_tokens: opts.maxTokens ?? 1200 };
   const filter = thinkFilter();
@@ -104,7 +107,7 @@ export async function* streamChat(messages: ChatMessage[], opts: { maxTokens?: n
     let pending = "";
     let tokens = 0;
     for (let attempt = 0; ; attempt++) {
-      const res = await fetch(`${s.baseUrl.replace(/\/v1$/, "")}/completion`, {
+      const res = await modelFetch(s.trusted)(`${s.baseUrl.replace(/\/v1$/, "")}/completion`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(s.apiKey ? { Authorization: `Bearer ${s.apiKey}` } : {}) },
         body: JSON.stringify({
@@ -168,16 +171,20 @@ export async function* streamChat(messages: ChatMessage[], opts: { maxTokens?: n
   }
 }
 
-export async function complete(messages: ChatMessage[], maxTokens = 400): Promise<string> {
+export async function complete(s: LlmSettings, messages: ChatMessage[], maxTokens = 400): Promise<string> {
   let out = "";
-  for await (const t of streamChat(messages, { maxTokens })) out += t;
+  for await (const t of streamChat(s, messages, { maxTokens })) out += t;
   return out.trim();
 }
 
-export function describeLlmError(e: unknown, baseUrl: string): string {
+export function describeLlmError(e: unknown, s: LlmSettings): string {
+  const baseUrl = s.trusted ? "this site's default model" : s.baseUrl;
+  for (let x: unknown = e; x instanceof Error; x = x.cause)
+    if (x.name === "PrivateAddressError")
+      return `This server can't connect to ${baseUrl} because it is a local or private address. Make your model reachable from the internet (see the tunnel steps in Settings) or use a hosted API.`;
   const msg = e instanceof Error ? e.message : String(e);
   if (/ECONNREFUSED|fetch failed|Connection error|ENOTFOUND|timed? ?out|aborted/i.test(msg))
-    return `Can't reach your model at ${baseUrl}. Start your local model server or update it in Settings.`;
+    return `Can't reach ${baseUrl}. Check that the model server is running and reachable from the internet, or update it in Settings.`;
   if (/model/i.test(msg) && /not found|does not exist/i.test(msg)) return `The model name in Settings was not found on ${baseUrl}. Pick one from the list in Settings.`;
   return `The model server returned an error: ${msg}`;
 }

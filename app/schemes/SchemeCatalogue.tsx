@@ -29,17 +29,26 @@ export function SchemeCatalogue({ schemes }: { schemes: SchemeCard[] }) {
   const { t } = useLang();
   const [q, setQ] = useState("");
   const [topic, setTopic] = useState<string>("");
-  const [where, setWhere] = useState<"" | "up" | "central">("");
+  const [where, setWhere] = useState("");
   const [tone, setTone] = useState<"" | Tone>("");
+
+  const states = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of schemes) {
+      const name = s.state.trim() || "Unknown";
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return [...counts.keys()].sort((a, b) => a.localeCompare(b));
+  }, [schemes]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const topicRe = TOPICS.find((x) => x.id === topic)?.re;
     return schemes.filter(
       (s) =>
-        (!needle || `${s.id} ${s.name} ${s.aka} ${s.category} ${s.benefit}`.toLowerCase().includes(needle)) &&
+        (!needle || `${s.id} ${s.name} ${s.aka} ${s.category} ${s.benefit} ${s.state}`.toLowerCase().includes(needle)) &&
         (!topicRe || topicRe.test(s.category)) &&
-        (!where || (where === "up" ? s.state === "Uttar Pradesh" : s.state !== "Uttar Pradesh")) &&
+        (!where || s.state.trim() === where) &&
         (!tone || statusInfo(s.status).tone === tone),
     );
   }, [schemes, q, topic, where, tone]);
@@ -48,12 +57,7 @@ export function SchemeCatalogue({ schemes }: { schemes: SchemeCard[] }) {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">{t("सभी योजनाएं", "All schemes")}</h1>
-        <p className="text-ink/75">
-          {t(
-            "64 योजनाएँ · 23 अक्टूबर 2026 तक",
-            "64 schemes · as of 23 Oct 2026",
-          )}
-        </p>
+        <p className="text-ink/75">{t(`${schemes.length} योजनाएँ`, `${schemes.length} schemes`)}</p>
       </div>
 
       <div className="space-y-3 rounded-2xl border border-brand-100 bg-white p-3">
@@ -78,15 +82,12 @@ export function SchemeCatalogue({ schemes }: { schemes: SchemeCard[] }) {
           ))}
         </div>
         <div className={row}>
-          {(
-            [
-              ["", t("UP + केंद्र", "UP + Central")],
-              ["up", t("केवल UP सरकार", "UP government")],
-              ["central", t("केंद्र सरकार", "Central government")],
-            ] as const
-          ).map(([v, label]) => (
-            <button key={v} type="button" className={btn(where === v)} onClick={() => setWhere(v)}>
-              {label}
+          <button type="button" className={btn(where === "")} onClick={() => setWhere("")}>
+            {t("सभी राज्य", "All states")}
+          </button>
+          {states.map((state) => (
+            <button key={state} type="button" className={btn(where === state)} onClick={() => setWhere(where === state ? "" : state)}>
+              {state === "Uttar Pradesh" ? t("उत्तर प्रदेश", "Uttar Pradesh") : /^Central/i.test(state) ? t("केंद्र सरकार", "Central") : state}
             </button>
           ))}
         </div>
@@ -122,7 +123,7 @@ export function SchemeCatalogue({ schemes }: { schemes: SchemeCard[] }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={s.status} />
                   <span className="text-xs text-ink/60">
-                    {s.id} · {s.state === "Uttar Pradesh" ? t("UP सरकार", "UP govt") : t("केंद्र सरकार", "Central govt")}
+                    {s.id} · {s.state === "Uttar Pradesh" ? t("उत्तर प्रदेश", "Uttar Pradesh") : /^Central/i.test(s.state) ? t("केंद्र सरकार", "Central") : s.state}
                   </span>
                 </div>
                 <h2 className={`text-lg font-bold leading-snug ${red ? "text-red-800" : ""}`}>{s.name}</h2>

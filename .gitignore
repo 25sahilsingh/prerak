@@ -5,6 +5,7 @@ node_modules
 next-env.d.ts
 *.tsbuildinfo
 data/app.db*
+data/uploads
 .cache
 .tmp
 .env.local

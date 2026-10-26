@@ -47,6 +47,10 @@ export default function Home() {
           {t("AI मॉडल जुड़ा नहीं है - सेटिंग्स खोलें", "AI model not connected - open Settings")}
         </Link>
       )}
+
+      <p className="fixed bottom-20 right-4 z-10 text-right text-xs text-ink/60 md:bottom-4">
+        {t("अभी केवल उत्तर प्रदेश", "Uttar Pradesh only, for now")}
+      </p>
     </div>
   );
 }

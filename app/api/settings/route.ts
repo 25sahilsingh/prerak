@@ -1,16 +1,9 @@
-import { getLlmSettings, PRESETS, publicSettings, saveLlmSettings } from "@/lib/settings";
+import { allowPrivateModelUrls } from "@/lib/safe-fetch";
+import { PRESETS, serverDefault } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
+// Each visitor's model is kept in their own browser, so there is nothing to save here.
 export async function GET() {
-  return Response.json({ ...publicSettings(getLlmSettings()), presets: PRESETS });
-}
-
-export async function PUT(req: Request) {
-  const body = (await req.json()) as { baseUrl?: string; model?: string; apiKey?: string };
-  if (!body.baseUrl || !/^https?:\/\//i.test(body.baseUrl.trim())) {
-    return Response.json({ error: "Enter a URL that starts with http:// or https://" }, { status: 400 });
-  }
-  const saved = saveLlmSettings({ baseUrl: body.baseUrl, model: body.model ?? "", apiKey: body.apiKey });
-  return Response.json(publicSettings(saved));
+  return Response.json({ presets: PRESETS, serverDefault: serverDefault(), allowPrivate: allowPrivateModelUrls });
 }

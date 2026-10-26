@@ -4,7 +4,7 @@ import { guardAnswer, officialContacts } from "@/lib/rag/guard";
 import { complete, describeLlmError, streamChat, type ChatMessage } from "@/lib/llm";
 import { buildMessages, detectLanguage, summaryMessages } from "@/lib/rag/prompt";
 import { retrieve } from "@/lib/rag/retrieve";
-import { getLlmSettings } from "@/lib/settings";
+import { resolveLlmSettings, SettingsError, type LlmSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,9 +16,19 @@ type Source = { id: string; name: string; status: string; links: string[]; helpl
 type MsgRow = { id: number; role: "user" | "assistant"; content: string };
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { message?: string; conversationId?: string; profileId?: string };
+  const body = (await req.json()) as { message?: string; conversationId?: string; profileId?: string; llm?: unknown };
   const question = body.message?.trim();
   if (!question) return Response.json({ error: "Please type a question." }, { status: 400 });
+
+  let llm: LlmSettings | null;
+  try {
+    llm = resolveLlmSettings(body.llm);
+  } catch (e) {
+    if (e instanceof SettingsError) return Response.json({ error: e.message }, { status: 400 });
+    throw e;
+  }
+  if (!llm) return Response.json({ error: "Connect your AI model in Settings first." }, { status: 400 });
+  const model = llm;
 
   const db = getDb();
   const profile = body.profileId ? getProfile(body.profileId) : null;
@@ -62,7 +72,6 @@ export async function POST(req: Request) {
 
   const encoder = new TextEncoder();
   const send = (controller: ReadableStreamDefaultController, obj: unknown) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
-  const { baseUrl } = getLlmSettings();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -70,7 +79,7 @@ export async function POST(req: Request) {
       let answer = "";
       try {
         // Devanagari often tokenises to one token per letter, so Hindi answers need a larger budget.
-        for await (const delta of streamChat(messages, { signal: req.signal, maxTokens: lang === "en" ? 1200 : 2400 })) {
+        for await (const delta of streamChat(model, messages, { signal: req.signal, maxTokens: lang === "en" ? 1200 : 2400 })) {
           answer += delta;
           send(controller, { type: "delta", text: delta });
         }
@@ -90,11 +99,11 @@ export async function POST(req: Request) {
         // An unanswered question would otherwise sit in the history the model sees next turn.
         db.prepare("DELETE FROM messages WHERE id = ?").run(userMsgId);
         answer = "";
-        if (!req.signal.aborted) send(controller, { type: "error", message: describeLlmError(e, baseUrl) });
+        if (!req.signal.aborted) send(controller, { type: "error", message: describeLlmError(e, model) });
       } finally {
         controller.close();
       }
-      if (answer) void maybeSummarize(convId!);
+      if (answer) void maybeSummarize(convId!, model);
     },
   });
 
@@ -104,7 +113,7 @@ export async function POST(req: Request) {
 const summarizing = new Set<string>();
 
 // Folds messages older than the recent window into the conversation summary, so long chats stay within the model's context.
-async function maybeSummarize(convId: string) {
+async function maybeSummarize(convId: string, llm: LlmSettings) {
   if (summarizing.has(convId)) return;
   const db = getDb();
   const conv = db.prepare("SELECT summary, summarized_upto FROM conversations WHERE id = ?").get(convId) as { summary: string; summarized_upto: number };
@@ -115,7 +124,7 @@ async function maybeSummarize(convId: string) {
   const toFold = pending.slice(0, pending.length - RECENT_TURNS);
   summarizing.add(convId);
   try {
-    const summary = await complete(summaryMessages(conv.summary, toFold.map((m): ChatMessage => ({ role: m.role, content: m.content }))));
+    const summary = await complete(llm, summaryMessages(conv.summary, toFold.map((m): ChatMessage => ({ role: m.role, content: m.content }))));
     if (summary) {
       db.prepare("UPDATE conversations SET summary = ?, summarized_upto = ? WHERE id = ?").run(summary, toFold[toFold.length - 1].id, convId);
     }

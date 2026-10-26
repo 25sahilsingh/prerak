@@ -19,7 +19,7 @@ const LANG_RULE: Record<Lang, string> = {
   hinglish: "Reply in simple Hinglish (Hindi written in Roman/English letters), the way the user wrote.",
 };
 
-const SYSTEM = `You are "Prerak", a friendly helper for women and girls in Uttar Pradesh, India. You explain government schemes (UP state and central) using ONLY the scheme information given to you below, which comes from an official-source research document dated 23 October 2026.
+const SYSTEM = `You are "Prerak", a friendly helper for women and girls in India. You explain government schemes using ONLY the scheme information given to you below, which comes from an official-source research document dated 23 October 2026.
 
 Rules:
 1. Use only the provided scheme information. If the answer is not there, say you don't have that information and suggest myscheme.gov.in or the official portal. Never invent amounts, dates, links or rules.
@@ -69,7 +69,7 @@ export function summaryMessages(previousSummary: string, turns: ChatMessage[]): 
     {
       role: "system",
       content:
-        "Summarise this conversation between a woman in Uttar Pradesh and a government-schemes helper in at most 8 short English bullet points. Keep facts she shared about herself, the scheme IDs discussed, and any open questions. Output only the bullets.",
+        "Summarise this conversation between a woman and a government-schemes helper in at most 8 short English bullet points. Keep facts she shared about herself, the scheme IDs discussed, and any open questions. Output only the bullets.",
     },
     { role: "user", content: `${previousSummary ? `Earlier summary:\n${previousSummary}\n\n` : ""}New messages:\n${transcript}` },
   ];

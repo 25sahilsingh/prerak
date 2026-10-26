@@ -1,4 +1,4 @@
-// End-to-end check against a running app (npm run build && npm start) with a model configured in Settings.
+// End-to-end check against a running app (npm run build && npm start) with LLM_BASE_URL set to a reachable model.
 // Usage: npm run e2e [-- <case>[,<case>...]]   cases: en, hi, hinglish, profile
 import { guardAnswer } from "../lib/rag/guard";
 

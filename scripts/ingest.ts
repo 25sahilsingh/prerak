@@ -5,10 +5,8 @@ import { DATA_DIR, getDb } from "../lib/db";
 import { embed, toBlob } from "../lib/rag/embed";
 
 const PDF_PATH = path.join(process.cwd(), "Women_Schemes_UP_Women_Oct2026_RAG.pdf");
-const EXPECTED_SCHEMES = 64;
 
 const SECTION_LABELS = [
-  "Who can use this in Uttar Pradesh",
   "Benefit",
   "Eligibility (who can apply)",
   "Not eligible (exclusions)",
@@ -19,14 +17,17 @@ const SECTION_LABELS = [
   "Official link and helpline",
   "Sources checked",
 ] as const;
-type Label = (typeof SECTION_LABELS)[number];
+type Label = (typeof SECTION_LABELS)[number] | "Who can use this";
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-// A heading is "<Label> - <scheme name> (<state>)", and may wrap onto the next line.
+// A heading is "<Label> - <scheme name> (<state>)". The state name is whatever the PDF says,
+// and it may wrap, so the heading runs until the closing ")" at the end of a line.
 const HEADING_RE = new RegExp(
-  `^(${SECTION_LABELS.map(escapeRe).join("|")}) - [\\s\\S]*?\\((?:Uttar\\s+Pradesh|Central\\s*\\(all\\s*India\\))\\)[ \\t]*$`,
+  `^(Who can use this(?: in .*)?|${SECTION_LABELS.map(escapeRe).join("|")}) - [\\s\\S]*?\\)[ \\t]*$`,
   "gm",
 );
+// UP-A01, IN-26, or a new state such as BR-01 / MH-A12.
+const SCHEME_ID = "[A-Z]{2,6}-[A-Z]?\\d+";
 
 type ParsedScheme = {
   id: string;
@@ -59,20 +60,15 @@ function parseScheme(id: string, name: string, body: string, page: number): Pars
   headings.forEach((h, i) => {
     const start = h.index! + h[0].length;
     const end = headings[i + 1]?.index ?? body.length;
-    const label = h[1] as Label;
+    const label = (h[1].startsWith("Who can use this") ? "Who can use this" : h[1]) as Label;
     const text = clean(body.slice(start, end));
     sections[label] = sections[label] ? `${sections[label]}\n${text}` : text;
   });
   return { id, name, page, meta, sections };
 }
 
-async function main() {
-  if (process.argv.includes("--if-missing")) {
-    const { n } = getDb().prepare("SELECT COUNT(*) AS n FROM schemes").get() as { n: number };
-    if (n === EXPECTED_SCHEMES) return;
-    console.log("First run: building the scheme database from the PDF (takes a few minutes once)...");
-  }
-  const pdf = await getDocumentProxy(new Uint8Array(fs.readFileSync(PDF_PATH)));
+export async function ingestPdf(pdfPath: string): Promise<{ schemes: number; states: { state: string; count: number }[] }> {
+  const pdf = await getDocumentProxy(new Uint8Array(fs.readFileSync(pdfPath)));
   const { text: pages } = await extractText(pdf, { mergePages: false });
 
   // Track page offsets so each scheme knows where it starts.
@@ -85,8 +81,9 @@ async function main() {
   const pageOf = (offset: number) => pageStarts.findLastIndex((s) => s <= offset) + 1;
 
   // The scheme title can wrap, so it runs until the "Scheme ID:" line.
-  const headerRe = /^\[((?:UP-[AB]|IN-)\d+)\] ([\s\S]+?)\n(?=Scheme ID:)/gm;
+  const headerRe = new RegExp(`^\\[(${SCHEME_ID})\\] ([\\s\\S]+?)\\n(?=Scheme ID:)`, "gm");
   const headers = [...full.matchAll(headerRe)];
+  if (!headers.length) throw new Error("No schemes found. Each scheme must start with [ID] and a Scheme ID: line.");
   const intro = full.slice(0, headers[0].index);
 
   const schemes: ParsedScheme[] = headers.map((h, i) => {
@@ -99,9 +96,7 @@ async function main() {
     return parseScheme(h[1], oneLine(h[2]), body, pageOf(h.index!));
   });
 
-  if (schemes.length !== EXPECTED_SCHEMES) {
-    throw new Error(`Expected ${EXPECTED_SCHEMES} schemes, parsed ${schemes.length}`);
-  }
+  if (!schemes.length) throw new Error("No schemes found. Each scheme must start with [ID] and a Scheme ID: line.");
   const missing = schemes.filter((s) => !s.sections["Eligibility (who can apply)"] || !s.sections["Benefit"]);
   if (missing.length) throw new Error(`Schemes missing sections: ${missing.map((s) => s.id).join(", ")}`);
 
@@ -194,9 +189,29 @@ async function main() {
   console.log("By status:", byStatus);
   console.log("By category:", byCategory);
   console.log(`Wrote data/app.db and data/schemes.json`);
+
+  const counts = new Map<string, number>();
+  for (const s of catalogue) counts.set(s.state || "Unknown", (counts.get(s.state || "Unknown") ?? 0) + 1);
+  return {
+    schemes: catalogue.length,
+    states: [...counts.entries()].map(([state, count]) => ({ state, count })).sort((a, b) => a.state.localeCompare(b.state)),
+  };
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+async function main() {
+  if (process.argv.includes("--if-missing")) {
+    const { n } = getDb().prepare("SELECT COUNT(*) AS n FROM schemes").get() as { n: number };
+    if (n > 0) return;
+    console.log("First run: building the scheme database from the PDF (takes a few minutes once)...");
+  }
+  const pdfPath = process.argv.find((arg) => arg.endsWith(".pdf")) ?? PDF_PATH;
+  await ingestPdf(pdfPath);
+}
+
+const invoked = process.argv[1]?.includes("ingest.ts");
+if (invoked) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
